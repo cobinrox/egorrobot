@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Egor Control</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#1a1e26; --btn:#252b36; --btn-active:#3b82f6;
+    --txt:#e6e9ef; --muted:#8b93a3; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444;
+  }
+  *{box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; background:var(--bg); color:var(--txt);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  .wrap{max-width:520px; margin:0 auto; padding:16px; padding-block:16px;}
+  h1{font-size:1.05rem; margin:0 0 12px; display:flex; align-items:center; gap:8px;}
+  .dot{width:10px; height:10px; border-radius:50%; background:var(--muted); display:inline-block;}
+  .dot.ok{background:var(--ok);} .dot.err{background:var(--err);}
+  .bar{background:var(--panel); border-radius:12px; padding:10px 12px; margin-bottom:12px; font-size:.85rem;}
+  .telem{display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-variant-numeric:tabular-nums;}
+  .telem b{color:var(--txt); font-weight:600;}
+  .banner{display:none; border-radius:10px; padding:10px 12px; margin-bottom:12px; font-weight:600;}
+  .banner.show{display:block;}
+  .banner.estop{background:rgba(239,68,68,.15); color:var(--err); border:1px solid var(--err);}
+  .banner.canerr{background:rgba(245,158,11,.15); color:var(--warn); border:1px solid var(--warn);}
+  .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px;}
+  button{font-family:inherit; border:none; cursor:pointer; color:var(--txt);}
+  button.dir{min-height:52px; padding:8px 4px; border-radius:12px; background:var(--btn);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    touch-action:none; transition:background .05s;}
+  button.dir .sym{font-size:1.35rem; line-height:1;}
+  button.dir .lbl{font-size:.55rem; color:var(--muted); letter-spacing:.02em;}
+  button.dir.active{background:var(--btn-active);} button.dir.active .lbl{color:#dbe6ff;}
+  button.stop{background:#374151;}
+  button.estop{width:100%; margin-top:10px; padding:12px; font-size:1rem; font-weight:800;
+    letter-spacing:.05em; background:var(--err); color:#fff; border-radius:12px;}
+  button.shutdown{width:100%; margin-top:16px; padding:11px; font-size:.9rem; font-weight:600;
+    background:transparent; color:var(--muted); border:1px solid #3a4150; border-radius:10px;}
+  button.shutdown:active{background:#2a2f3a;}
+  button.enable{width:100%; margin-top:10px; padding:12px; font-size:.95rem; font-weight:700;
+    background:var(--ok); color:#06210f; border-radius:12px; display:none;}
+  button.enable.show{display:block;}
+  .hint{color:var(--muted); font-size:.72rem; text-align:center; margin-top:14px; line-height:1.5;}
+  .cam{position:relative; width:100%; max-width:320px; aspect-ratio:4/3; background:#000;
+    border-radius:12px; overflow:hidden; margin:0 auto 12px; display:flex;
+    align-items:center; justify-content:center;}
+  .cam img{width:100%; height:100%; object-fit:contain; display:block;}
+  .camoff{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--muted); font-size:.9rem; background:#000; text-align:center; padding:12px;}
+  .camoff.hide{display:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span id="conn" class="dot"></span> Egor Control</h1>
+
+  <div class="cam">
+    <img id="cam" alt="camera view">
+    <div id="camoff" class="camoff">Camera offline &mdash; retrying&hellip;</div>
+  </div>
+
+  <div class="bar">
+    <div class="telem">
+      <span>L (0x7F): <b id="lvel">--</b> rad/s &nbsp; <b id="ltmp">--</b>&deg;C</span>
+      <span>R (0x7E): <b id="rvel">--</b> rad/s &nbsp; <b id="rtmp">--</b>&deg;C</span>
+    </div>
+  </div>
+
+  <div id="estopBanner" class="banner estop">E-STOPPED &mdash; press ENABLE to resume</div>
+  <div id="canBanner" class="banner canerr">CAN error &mdash; <span id="canmsg"></span></div>
+
+  <div class="grid">
+    <button class="dir" data-cmd="FWD_L"><span class="sym">&#8598;</span><span class="lbl">FWD-L</span></button>
+    <button class="dir" data-cmd="FWD"><span class="sym">&#8593;</span><span class="lbl">FORWARD</span></button>
+    <button class="dir" data-cmd="FWD_R"><span class="sym">&#8599;</span><span class="lbl">FWD-R</span></button>
+
+    <button class="dir" data-cmd="SPIN_L"><span class="sym">&#8634;</span><span class="lbl">SPIN-L</span></button>
+    <button class="dir stop" id="stopBtn"><span class="sym">&#9632;</span><span class="lbl">STOP</span></button>
+    <button class="dir" data-cmd="SPIN_R"><span class="sym">&#8635;</span><span class="lbl">SPIN-R</span></button>
+
+    <button class="dir" data-cmd="REV_L"><span class="sym">&#8601;</span><span class="lbl">REV-L</span></button>
+    <button class="dir" data-cmd="REV"><span class="sym">&#8595;</span><span class="lbl">REVERSE</span></button>
+    <button class="dir" data-cmd="REV_R"><span class="sym">&#8600;</span><span class="lbl">REV-R</span></button>
+  </div>
+
+  <button class="estop" id="estopBtn">EMERGENCY STOP</button>
+  <button class="enable" id="enableBtn">ENABLE (clear e-stop)</button>
+
+  <div class="hint">
+    Hold a button to move; release to stop.<br>
+    Keys: arrows / WASD move &middot; Q/E &amp; Z/C curve &middot; Space stops.<br>
+    <a href="/admin" style="color:#5b9bff;">admin / network info</a>
+  </div>
+
+  <button class="shutdown" id="shutdownBtn">&#9211; Shut down Pi</button>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const HOLD_MS = 150;            // resend interval while held (feeds the watchdog)
+  let activeCmd = null;
+  let timer = null;
+
+  function post(path){
+    return fetch(path, {method:"POST"}).catch(function(){ /* watchdog is the backstop */ });
+  }
+
+  function highlight(cmd, on){
+    if(!cmd) return;
+    const el = document.querySelector('button[data-cmd="'+cmd+'"]');
+    if(el) el.classList.toggle("active", on);
+  }
+
+  function startHold(cmd){
+    if(activeCmd === cmd) return;
+    if(activeCmd) highlight(activeCmd, false);
+    if(timer){ clearInterval(timer); timer = null; }
+    activeCmd = cmd;
+    highlight(cmd, true);
+    post("/api/move/" + cmd);
+    timer = setInterval(function(){ post("/api/move/" + cmd); }, HOLD_MS);
+  }
+
+  function stopHold(){
+    if(timer){ clearInterval(timer); timer = null; }
+    if(activeCmd) highlight(activeCmd, false);
+    activeCmd = null;
+    post("/api/move/STOP");
+  }
+
+  // --- pointer (mouse + touch) on each direction button ---
+  document.querySelectorAll("button.dir[data-cmd]").forEach(function(btn){
+    const cmd = btn.getAttribute("data-cmd");
+    btn.addEventListener("pointerdown", function(e){
+      e.preventDefault();
+      try { btn.setPointerCapture(e.pointerId); } catch(_){}
+      startHold(cmd);
+    });
+    btn.addEventListener("pointerup",     function(e){ e.preventDefault(); stopHold(); });
+    btn.addEventListener("pointercancel", function(){ stopHold(); });
+    btn.addEventListener("contextmenu",   function(e){ e.preventDefault(); });
+  });
+
+  document.getElementById("stopBtn").addEventListener("click", function(){ stopHold(); });
+  document.getElementById("estopBtn").addEventListener("click", function(){
+    if(timer){ clearInterval(timer); timer = null; }
+    activeCmd = null;
+    post("/api/estop");
+  });
+  document.getElementById("enableBtn").addEventListener("click", function(){ post("/api/enable"); });
+  document.getElementById("shutdownBtn").addEventListener("click", async function(){
+    if(!confirm("Shut down the Raspberry Pi now?\n\nThe robot will stop and the Pi will power off - you'll need to power-cycle it to use it again.")) return;
+    stopHold();
+    try{
+      const r = await fetch("/api/shutdown", {method:"POST"});
+      const s = await r.json();
+      alert(s.ok ? "Pi is shutting down. Wait ~20 seconds, then it's safe to cut power."
+                 : ("Shutdown not available: " + (s.error || "unknown error")));
+    }catch(e){
+      alert("Shutdown request sent (the Pi may already be going down).");
+    }
+  });
+
+  // --- keyboard ---
+  const KEYMAP = {
+    ArrowUp:"FWD", ArrowDown:"REV", ArrowLeft:"SPIN_L", ArrowRight:"SPIN_R",
+    w:"FWD", s:"REV", a:"SPIN_L", d:"SPIN_R", q:"FWD_L", e:"FWD_R", z:"REV_L", c:"REV_R"
+  };
+  document.addEventListener("keydown", function(e){
+    if(e.repeat) return;
+    const cmd = KEYMAP[e.key];
+    if(cmd){ e.preventDefault(); startHold(cmd); }
+    else if(e.key === " "){ e.preventDefault(); stopHold(); }
+  });
+  document.addEventListener("keyup", function(e){
+    if(KEYMAP[e.key] && KEYMAP[e.key] === activeCmd){ e.preventDefault(); stopHold(); }
+  });
+
+  // --- safety: stop if the tab is hidden or the page is closing ---
+  document.addEventListener("visibilitychange", function(){ if(document.hidden) stopHold(); });
+  window.addEventListener("pagehide", function(){
+    if(navigator.sendBeacon) navigator.sendBeacon("/api/stop");
+  });
+
+  // --- telemetry polling ---
+  const conn = document.getElementById("conn");
+  function n(x){ return (typeof x === "number") ? x.toFixed(2) : "--"; }
+  async function poll(){
+    try{
+      const r = await fetch("/api/status", {cache:"no-store"});
+      const s = await r.json();
+      conn.className = "dot ok";
+      document.getElementById("lvel").textContent = n(s.wheels.left.vel_rad_s);
+      document.getElementById("rvel").textContent = n(s.wheels.right.vel_rad_s);
+      document.getElementById("ltmp").textContent = n(s.wheels.left.temp_c);
+      document.getElementById("rtmp").textContent = n(s.wheels.right.temp_c);
+      document.getElementById("estopBanner").classList.toggle("show", !!s.estopped);
+      document.getElementById("enableBtn").classList.toggle("show", !!s.estopped);
+      const ce = document.getElementById("canBanner");
+      ce.classList.toggle("show", !!s.can_error);
+      if(s.can_error) document.getElementById("canmsg").textContent = s.last_error || "";
+    }catch(err){
+      conn.className = "dot err";
+    }
+  }
+  setInterval(poll, 700);
+  poll();
+
+  // --- camera MJPEG stream (ustreamer on port 8081, same host as this page) ---
+  const CAM_PORT = 8081;
+  const camImg = document.getElementById("cam");
+  const camOff = document.getElementById("camoff");
+  const camBase = location.protocol + "//" + location.hostname + ":" + CAM_PORT + "/stream";
+  let camTimer = null;
+  function camConnect(){
+    camOff.classList.remove("hide");
+    camImg.src = camBase + "?t=" + Date.now();
+    clearTimeout(camTimer);
+    camTimer = setTimeout(function(){ camOff.classList.add("hide"); }, 1500); // optimistic
+  }
+  camImg.addEventListener("load",  function(){ clearTimeout(camTimer); camOff.classList.add("hide"); });
+  camImg.addEventListener("error", function(){ clearTimeout(camTimer); camOff.classList.remove("hide"); setTimeout(camConnect, 2000); });
+  camConnect();
+})();
+</script>
+</body>
+</html>

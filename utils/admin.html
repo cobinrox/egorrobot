@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Egor Admin</title>
+<style>
+  :root{--bg:#0f1115;--panel:#1a1e26;--txt:#e6e9ef;--muted:#8b93a3;--ok:#22c55e;
+        --warn:#f59e0b;--err:#ef4444;--accent:#3b82f6;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  .wrap{max-width:560px;margin:0 auto;padding:16px;padding-block:16px;}
+  h1{font-size:1.1rem;margin:0 0 12px;}
+  h2{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px;}
+  .card{background:var(--panel);border-radius:12px;padding:14px;margin-bottom:14px;}
+  code{background:#0c0e13;border:1px solid #2a2f3a;border-radius:8px;padding:9px 11px;display:inline-block;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#dbe6ff;user-select:all;word-break:break-all;font-size:1rem;}
+  table{width:100%;border-collapse:collapse;font-size:.9rem;}
+  th,td{text-align:left;padding:6px;border-bottom:1px solid #2a2f3a;vertical-align:top;}
+  th{color:var(--muted);font-weight:600;}
+  .ip{color:var(--ok);font-family:ui-monospace,Menlo,Consolas,monospace;}
+  .down{color:var(--muted);}
+  a{color:var(--accent);}
+  .muted{color:var(--muted);font-size:.8rem;margin-top:8px;}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;
+    border-bottom:1px solid #2a2f3a;font-size:.92rem;}
+  .row:last-child{border-bottom:none;}
+  .pill{font-size:.8rem;font-weight:600;padding:2px 9px;border-radius:999px;}
+  .pill.ok{background:rgba(34,197,94,.15);color:var(--ok);}
+  .pill.warn{background:rgba(245,158,11,.15);color:var(--warn);}
+  .pill.err{background:rgba(239,68,68,.15);color:var(--err);}
+  .pill.na{background:#2a2f3a;color:var(--muted);}
+  button.reboot{width:100%;padding:13px;font-size:1rem;font-weight:700;background:var(--warn);
+    color:#231a05;border:none;border-radius:12px;cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Egor Admin &mdash; <span id="host">…</span></h1>
+
+  <div class="card">
+    <h2>SSH for maintenance</h2>
+    <div id="sshbox">reading…</div>
+    <div class="muted" id="sshnote"></div>
+  </div>
+
+  <div class="card">
+    <h2>System health</h2>
+    <div class="row"><span>Power</span><span id="power" class="pill na">…</span></div>
+    <div class="row"><span>CPU temperature</span><span id="temp" class="pill na">…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Services</h2>
+    <div id="services"><div class="row"><span class="muted">loading…</span></div></div>
+  </div>
+
+  <div class="card">
+    <h2>CAN bus (can0)</h2>
+    <div class="row"><span>Status</span><span id="can" class="pill na">…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Network interfaces</h2>
+    <table>
+      <thead><tr><th>Iface</th><th>IPv4</th><th>State</th><th>MAC</th></tr></thead>
+      <tbody id="ifaces"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Maintenance</h2>
+    <button class="reboot" id="rebootBtn">Reboot the Pi</button>
+    <div class="muted">Reboots the Pi (motors stop first). It'll be back in ~30&ndash;60s.</div>
+  </div>
+
+  <p><a href="/">&larr; back to controls</a> &middot; <span class="muted">auto-refreshes every 3s</span></p>
+</div>
+
+<script>
+function esc(s){ return (s==null?"":String(s)).replace(/[<>&]/g,function(c){return {"<":"&lt;",">":"&gt;","&":"&amp;"}[c];}); }
+function setPill(el, cls, text){ el.className = "pill " + cls; el.textContent = text; }
+
+async function loadNet(){
+  const r = await fetch("/api/netinfo", {cache:"no-store"});
+  const d = await r.json();
+  document.getElementById("host").textContent = d.hostname || "?";
+  const ifs = d.interfaces || {};
+  const rows = Object.keys(ifs).sort().map(function(name){
+    const i = ifs[name];
+    const ips = (i.ipv4 && i.ipv4.length)
+      ? i.ipv4.map(function(x){return '<span class="ip">'+esc(x)+'</span>';}).join("<br>")
+      : '<span class="down">&mdash;</span>';
+    return "<tr><td>"+esc(name)+"</td><td>"+ips+"</td><td>"+esc(i.state||"?")+
+           '</td><td class="muted">'+esc(i.mac||"")+"</td></tr>";
+  }).join("");
+  document.getElementById("ifaces").innerHTML = rows ||
+    '<tr><td colspan="4" class="muted">no interfaces</td></tr>';
+  const eth = ifs.eth0 && ifs.eth0.ipv4 && ifs.eth0.ipv4[0];
+  const box = document.getElementById("sshbox"), note = document.getElementById("sshnote");
+  if(eth){
+    box.innerHTML = "<code>ssh u@"+esc(eth)+"</code>";
+    note.textContent = "eth0 is on a router network — run this from a laptop on that same network.";
+  }else{
+    box.innerHTML = '<span class="down">eth0 has no router IP right now</span>';
+    note.textContent = "Plug eth0 into a router to get a maintenance IP (wlan0 below is the egorwifi AP).";
+  }
+}
+
+async function loadSys(){
+  const r = await fetch("/api/sysinfo", {cache:"no-store"});
+  const d = await r.json();
+  // power
+  const pe = document.getElementById("power");
+  if(d.undervoltage_now)       setPill(pe,"err","UNDER-VOLTAGE NOW");
+  else if(d.undervoltage_past) setPill(pe,"err","under-voltage occurred");
+  else if(d.throttled_now||d.throttled_past) setPill(pe,"warn","throttled");
+  else                         setPill(pe,"ok","OK");
+  // temp
+  const te = document.getElementById("temp");
+  if(typeof d.temp_c === "number"){
+    const c = d.temp_c;
+    setPill(te, c>=80?"err":(c>=65?"warn":"ok"), c.toFixed(1)+" °C");
+  } else setPill(te,"na","n/a");
+  // services
+  const sv = d.services || {};
+  document.getElementById("services").innerHTML = Object.keys(sv).map(function(name){
+    const st = sv[name];
+    const cls = st==="active" ? "ok" : (st==="unknown" ? "na" : "err");
+    return '<div class="row"><span>'+esc(name)+'</span><span class="pill '+cls+'">'+esc(st)+'</span></div>';
+  }).join("") || '<div class="row"><span class="muted">none</span></div>';
+  // can
+  const ce = document.getElementById("can"), cn = d.can0 || {};
+  if(!cn.present) setPill(ce,"err","not present");
+  else if(cn.link==="UP" && cn.can_state==="ERROR-ACTIVE") setPill(ce,"ok","UP · ERROR-ACTIVE");
+  else if(cn.link==="UP") setPill(ce,"warn","UP · "+esc(cn.can_state));
+  else setPill(ce,"err",esc(cn.link)+" · "+esc(cn.can_state));
+}
+
+async function load(){
+  try{ await loadNet(); }catch(e){ document.getElementById("sshbox").textContent = "cannot reach server"; }
+  try{ await loadSys(); }catch(e){ /* leave pills as-is */ }
+}
+setInterval(load, 3000); load();
+
+document.getElementById("rebootBtn").addEventListener("click", async function(){
+  if(!confirm("Reboot the Pi now?\n\nThe robot will stop and the Pi will restart (back in ~30-60s).")) return;
+  try{
+    const r = await fetch("/api/reboot", {method:"POST"});
+    const s = await r.json();
+    alert(s.ok ? "Rebooting… this page will lose connection; reload in ~45 seconds."
+               : ("Reboot not available: " + (s.error || "unknown error")));
+  }catch(e){
+    alert("Reboot request sent (the Pi may already be going down).");
+  }
+});
+</script>
+</body>
+</html>
