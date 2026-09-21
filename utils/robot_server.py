@@ -150,6 +150,10 @@ class Controller:
         self.can_error = bool(bus_err)   # True while CAN is unavailable / failing
         self.last_error = bus_err
         self.armed = False           # motors configured into speed mode + enabled
+        self.drive_mode = "rear"     # "rear" (normal) or "front" (180-degree flip)
+        self.asleep = False          # motors benignly disabled (quiet, power-saving)
+        self.sleep_req = False
+        self.wake_req = False
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
 
@@ -163,9 +167,20 @@ class Controller:
         with self.lock:
             if self.estopped:
                 return False
+            if self.drive_mode == "front":     # front-wheel drive = a 180-degree
+                l, r = -l, -r                  # reorientation = negate both wheels
             self.tl, self.tr = clamp(l), clamp(r)
             self.last_cmd = time.time()
+            if self.asleep:              # a drive command wakes the motors
+                self.wake_req = True
             return True
+
+    def set_mode(self, mode):
+        if mode not in ("rear", "front"):
+            return False
+        with self.lock:
+            self.drive_mode = mode
+        return True
 
     def soft_stop(self):
         with self.lock:
@@ -181,11 +196,23 @@ class Controller:
         with self.lock:
             self.enable_req = True
 
+    def sleep(self):
+        # benign: disable the motors so they go quiet (distinct from e-stop)
+        with self.lock:
+            self.sleep_req = True
+            self.tl = self.tr = 0.0
+
+    def wake(self):
+        with self.lock:
+            self.wake_req = True
+
     def status(self):
         with self.lock:
             now = time.time()
             return {
                 "estopped": self.estopped,
+                "asleep": self.asleep,
+                "drive_mode": self.drive_mode,
                 "watchdog_ok": (now - self.last_cmd) <= WATCHDOG_TIMEOUT,
                 "targets": {"left": self.tl, "right": self.tr},
                 "wheels": {
@@ -245,9 +272,12 @@ class Controller:
             with self.lock:
                 er, self.estop_req = self.estop_req, False
                 nr, self.enable_req = self.enable_req, False
+                sr, self.sleep_req = self.sleep_req, False
+                wr, self.wake_req = self.wake_req, False
                 fresh = (now - self.last_cmd) <= WATCHDOG_TIMEOUT
                 tl, tr = (self.tl, self.tr) if fresh else (0.0, 0.0)
                 estopped = self.estopped
+                asleep = self.asleep
 
             # 4) e-stop / re-enable transitions
             if er:
@@ -260,12 +290,30 @@ class Controller:
                     self.armed = True
                 with self.lock:
                     self.estopped = False
+                    self.asleep = False
                     self.tl = self.tr = 0.0
                     self.last_cmd = time.time()
                 estopped = False
+                asleep = False
 
-            # 5) stream speeds; throttle attempts while the bus is erroring
-            if not estopped and (not self.can_error or now >= next_retry):
+            # 4b) sleep / wake transitions (benign, distinct from e-stop)
+            if not estopped:
+                if wr:
+                    if self._safe(lambda: (self.left.arm(), self.right.arm())):
+                        self.armed = True
+                    with self.lock:
+                        self.asleep = False
+                    asleep = False
+                elif sr:
+                    self._safe(lambda: (self.left.stop(), self.right.stop()))
+                    with self.lock:
+                        self.asleep = True
+                        self.tl = self.tr = 0.0
+                    asleep = True
+
+            # 5) stream speeds; throttle attempts while the bus is erroring.
+            #     Skip entirely while asleep so the motors stay disabled + quiet.
+            if not estopped and not asleep and (not self.can_error or now >= next_retry):
                 if not self._safe(lambda: (self.left.command_fraction(tl),
                                            self.right.command_fraction(tr))):
                     next_retry = now + 0.5
@@ -306,6 +354,8 @@ def api_info():
                    endpoints=["GET /  (control UI)", "POST /api/move/<DIR>",
                               "POST /api/drive {left,right}", "POST /api/stop",
                               "POST /api/estop", "POST /api/enable",
+                              "POST /api/sleep", "POST /api/wake",
+                              "POST /api/mode/<rear|front>",
                               "POST /api/shutdown", "GET /api/status"])
 
 @app.route('/api/move/<direction>', methods=['POST'])
@@ -346,6 +396,27 @@ def estop():
 def enable():
     ctrl.reenable()
     return jsonify(ok=True, command="ENABLE")
+
+@app.route('/api/sleep', methods=['POST'])
+def sleep_motors():
+    ctrl.sleep()
+    return jsonify(ok=True, command="SLEEP",
+                   note="motors disabled to go quiet; drive or POST /api/wake to resume")
+
+@app.route('/api/wake', methods=['POST'])
+def wake_motors():
+    was_estopped = ctrl.status()['estopped']
+    ctrl.wake()
+    if was_estopped:
+        return jsonify(ok=True, command="WAKE", note="still e-stopped; POST /api/enable first")
+    return jsonify(ok=True, command="WAKE")
+
+@app.route('/api/mode/<mode>', methods=['POST'])
+def set_drive_mode(mode):
+    m = mode.lower()
+    if not ctrl.set_mode(m):
+        return jsonify(error="mode must be 'rear' or 'front'"), 400
+    return jsonify(ok=True, drive_mode=m)
 
 @app.route('/api/shutdown', methods=['POST'])
 def shutdown_pi():

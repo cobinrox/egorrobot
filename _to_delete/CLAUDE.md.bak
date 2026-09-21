@@ -1,0 +1,394 @@
+# EgorRobot — Project Context for AI Assistants
+
+**Read this first.** It captures everything a new Claude/AI session (or another
+chatbot) needs to work on this robot without re-deriving the hard-won findings.
+
+**Status:** Working. Motors drive under command (speed & position), direction-
+corrected, untethered; the robot is drivable from a web joystick page with live
+webcam video, a rear/front-wheel drive toggle, and an admin/health page. The Pi5 is healthy — a Sept-2026 "won't
+boot" scare was diagnosed (via boot breadcrumbs) to a networking/IP issue, not
+hardware. The portable **egorwifi access point** (`10.10.10.1`) + **two-QR sticker**
+access is built and working; captive-portal auto-open was attempted but is blocked by
+modern phone DNS/HTTPS behavior (use the QR). As of September 2026.
+
+![Egor — the robot chassis](utils/images/robot.png)
+*(Drop a photo of the robot in as `utils/images/robot.png`.)*
+
+---
+
+## Features at a glance
+
+Beyond basic driving, this project grew a set of features. They split by who they
+serve.
+
+### For the person using the robot
+- **Web joystick control** [done] — a phone-friendly page (hold-to-move, release-
+  to-stop, keyboard keys, a big EMERGENCY STOP) that drives the robot over Wi-Fi.
+- **Live camera view** [done] — the robot's USB webcam streamed into that page, so
+  the driver sees where it's going.
+- **Rear / front-wheel drive toggle** [done] — a one-tap switch that flips the
+  robot's sense of "forward" 180°, so whichever end is leading becomes the front and
+  you can drive it from either side without walking around it (both forward/back AND
+  driver/passenger swap). The camera border makes the current mode obvious at a
+  glance — **green in rear-wheel mode, red in front-wheel mode**.
+- **One-tap safe shutdown** [done] — a confirm-guarded button that powers the Pi
+  down cleanly from the page.
+- **Scan-and-go access** [done] — the Pi hosts its own Wi-Fi (`egorwifi`,
+  `10.10.10.1`) so the robot works anywhere with no router; a printable **two-QR
+  sticker** joins the network (password embedded, nothing to type) and opens the
+  controls. Scan to join, scan to drive. (Captive-portal *auto*-open was attempted
+  but modern phones block it — see Access layer; the two-QR flow is the method.)
+
+### For admins / developers / troubleshooting
+The "make it maintainable" extras — several are generic enough to reuse on any
+Raspberry Pi project.
+- **Admin / health page** (`/admin`) [done] — one-glance panel: each interface's IP
+  (with a ready-to-copy `ssh u@<eth0-ip>` for maintenance), power/under-voltage
+  status, CPU temperature, the three services' health, the CAN bus state, and a
+  **Reboot** button.
+- **Web shutdown & reboot** [done] — power off or restart from the browser, gated by
+  a narrow, validated password-less-sudo rule for only `shutdown`.
+- **Hardware emergency shutdown button** [done] — a physical GPIO push-button that
+  forces a clean shutdown, protecting the SD card from power-bump corruption.
+- **Boot breadcrumbs** (`bootcrumbs.sh`) [done] — stamps how far a boot got (and its
+  IP + board model) onto the card at each stage, to diagnose a Pi that won't boot or
+  isn't reachable **without HDMI or serial**. This is what proved the Pi5 was fine.
+  Reusable on any Pi.
+- **Direct-cable SSH** (`setup_eth_direct.sh`) [done] — turns the wired port into a
+  self-contained link so a laptop plugged straight in (no router) gets an address
+  and can SSH in — field maintenance anywhere.
+- **CAN health check** (`check_can.sh`) [done] — read-only "is the motor bus
+  healthy?" one-liner.
+- **Resilient control server** [done] — starts and serves the UI/admin even with no
+  CAN HAT (reports the fault instead of crashing); a watchdog stops the wheels if
+  commands stop arriving.
+- **Boot-persistent services** [done] — CAN bring-up, control server, and camera
+  each auto-start at boot via their own installer scripts.
+- **Low-level API test clients** (`run_*.py`) and an **emergency `estop.sh`** [done]
+  for quick shell bring-up and a hard stop.
+
+---
+
+## What this project is
+
+Revive and control a small Raspberry Pi 5 robot chassis with two wheels driven
+by Xiaomi CyberGear smart motors over a CAN bus. The robot previously worked;
+this effort brought it back to life after re-wiring.
+
+## Hardware
+
+- **Raspberry Pi 5**, hostname `egor`. OS: Raspberry Pi OS 64-bit **Lite**.
+- **Waveshare 2-CH CAN HAT** (MCP2515 controller + CAN transceiver per channel).
+- **2 × Xiaomi CyberGear micromotors** (model MIQDD-PG-06-12-02A), **7.75:1**
+  integrated planetary gearbox. Feedback is **load-end (post-gearbox)**, so one
+  reported "rotation" = one wheel turn.
+- Both motors are **daisy-chained on a single CAN bus** (one CAN cable).
+- **One power supply (~20 V; CyberGear spec 16–28 V)** feeds BOTH the Pi/hat and
+  the motor rail. The motor rail passes through a main switch, a side red switch,
+  and **front/back bump (e-stop) switches** that cut the **motor rail only** —
+  the Pi stays powered when a bump switch trips.
+
+## Access
+
+```
+ssh u@egor          # user "u", host "egor"
+```
+Repo lives at `~/gitprojects/egorrobot` on the Pi (files are edited on a separate
+dev machine and copied over — changes do not auto-deploy). A backup OS image
+(`egor_9_7_with_powerdown.img`) is saved in the repo root in case the SD card fails.
+
+---
+
+## ⚠️ CRITICAL GOTCHAS (these cost the most time — read them)
+
+### 1. The Waveshare header labels are SWAPPED vs the Linux interface names
+The header physically silk-screened **"CAN1"** enumerates as the **`can0`**
+interface in Linux. **The motors are wired to that header, so in software they
+are on `can0`.** The `can1` interface exists but has **no cable** and is unused.
+> Rule: ignore the board silkscreen. **Use `can0` for everything motor-related.**
+> Trust the empirical result (which interface returns a reply), not the label.
+
+### 2. The CAN interface must be up at 1 Mbit/s before talking to motors
+A systemd service brings `can0` up automatically on every boot. Install it once:
+```
+sudo ./utils/setup_can_service.sh    # installs & starts egor-can.service
+```
+If you need it manually (or before installing the service):
+```
+sudo ip link set can0 up type can bitrate 1000000
+```
+CyberGear runs at **1 Mbit/s**. Note: python-can's `bitrate=` argument is
+**ignored** for SocketCAN — the real bitrate comes from `ip link` / the service.
+
+### 3. A latched bump/e-stop switch silently kills the motor rail
+Symptom during revival: motor got **0 V** while the Pi ran fine. Cause: the
+front bump switch (normally-closed e-stop) was **stuck open**. Reset it to
+restore power. To locate an open switch in the chain: measure **across each
+switch** — the open one drops the full ~20 V; a closed one reads ~0 V.
+
+---
+
+## Motors: IDs, direction, gearbox
+
+Two motors on the one `can0` bus, so they have **distinct CAN IDs**:
+
+| Wheel      | CAN ID       | "Forward" command sign | Notes                         |
+|------------|--------------|------------------------|-------------------------------|
+| driver     | `0x7F` (127) | **−1**                 | spins backward on a raw `+`   |
+| passenger  | `0x7E` (126) | **+1**                 | spins forward on a raw `+`    |
+
+The motors are mounted **mirror-image** on opposite sides, so the same positive
+speed command turns them in **opposite physical directions**. Code applies a
+per-motor "forward sign" so "forward" means the same physical direction for both.
+
+"5 rotations" is counted from each motor's own feedback angle (post-gearbox), so
+it is 5 **wheel** turns regardless of the 7.75:1 gearing.
+
+---
+
+## Web control layer
+
+![The web control page](utils/images/main_web_page.png)
+
+The robot is drivable over HTTP. `utils/robot_server.py` (Flask) runs a background
+control thread that owns the CAN bus and streams speed commands to both wheels at
+50 Hz; Flask request handlers only update shared target state (never touch the bus).
+
+- **Primitive:** everything builds on `set_velocity(left, right)`, each in −1..1
+  (physical forward). Named button commands are thin wrappers (see `MOVES`).
+- **Drive mode (rear / front):** a server-side `drive_mode` flag (`"rear"` by
+  default) reinterprets every command. In `"front"` mode `set_velocity` negates
+  BOTH wheels — a clean 180° reorientation — so forward/back AND driver/passenger
+  both flip, letting you drive the robot from either end. Set via `POST
+  /api/mode/<rear|front>`; the current mode is reported in `/api/status`
+  (`drive_mode`). The UI's radio buttons call it and tint the camera border
+  green (rear) / red (front).
+- **Watchdog:** if no command arrives within 0.5 s the wheels are commanded to 0,
+  so a dropped connection / closed tab fails safe. The UI resends the held command
+  every 150 ms and sends STOP on release.
+- **Wheels:** driver `0x7F` = LEFT, passenger `0x7E` = RIGHT.
+- **Resilience:** CAN send errors (e.g. a dropped wire → ENOBUFS / no-ACK) are
+  caught; the control thread keeps running and surfaces `can_error` / `last_error`
+  in `/api/status` instead of crashing (which would kill the watchdog).
+- **e-stop / enable:** `/api/estop` disables the motors (latched); `/api/enable`
+  re-arms; `/api/stop` is a soft stop (stay enabled, hold zero).
+- **UI:** `utils/robot_ui.html` is served at `/` — same origin as the API (no
+  CORS). Served by Flask, not a static host, because it must reach the Pi's local
+  API. 3×3 pad + keyboard + live telemetry.
+- **Shutdown:** `POST /api/shutdown` stops the motors then runs `sudo shutdown -h
+  now` to power the Pi off cleanly. The server runs as a non-root user, so
+  `utils/setup_shutdown_api.sh` installs a narrow password-less-sudo rule for only
+  `shutdown`; without it the endpoint returns a permission error. The page's ⏻
+  button confirms first. (The GPIO shutdown button runs the same command directly;
+  there is no separate reusable shutdown service.)
+
+Endpoints: `POST /api/move/<DIR>`, `POST /api/drive {left,right}`, `POST /api/stop`,
+`POST /api/estop`, `POST /api/enable`, `POST /api/mode/<rear|front>`,
+`POST /api/shutdown`, `POST /api/reboot`,
+`GET /api/status`, `GET /api/netinfo`, `GET /api/sysinfo`, `GET /` (UI),
+`GET /admin` (admin page), `GET /api`.
+DIR ∈ FWD, REV, FWD_L, FWD_R, REV_L, REV_R, SPIN_L, SPIN_R, STOP. Turn arcs use an
+inner-wheel fraction of 0.3 (tunable in `MOVES`); base speed 4.0 rad/s.
+
+Runs as `egor-robot.service` (installed by `setup_robot_service.sh`, started after
+`egor-can.service`). Needs `python3-flask`. No authentication — trusted LAN only.
+
+### Admin / maintenance page
+
+![The admin / health page](utils/images/admin_page.png)
+
+`GET /admin` (served from `utils/admin.html`, linked at the bottom of the control
+page) is a live health panel refreshed every 3 s, backed by two read endpoints:
+
+- **`GET /api/netinfo`** — each interface's IPv4/MAC/state; the page turns eth0's
+  address into a copy-ready `ssh u@<ip>` line. This is how you find the Pi's DHCP
+  address for maintenance while you're on the robot's own AP.
+- **`GET /api/sysinfo`** — CPU temperature; under-voltage/throttle flags from
+  `vcgencmd get_throttled` (the fast way to spot a power problem); `systemctl
+  is-active` for the three services; and `can0` link/error state. No root needed.
+- **`POST /api/reboot`** — stops the motors then `sudo shutdown -r now`, using the
+  same sudo rule as shutdown; the page's button confirms first.
+
+---
+
+## Camera / video layer
+
+A USB webcam (GUSGU G910, UVC) is streamed as **MJPEG by µStreamer** on port 8081,
+kept **separate** from the control server so video load never stalls motor control.
+
+- The camera outputs **MJPG in hardware** at 640×480 (`v4l2-ctl --list-formats-ext`
+  to confirm), so µStreamer passes frames through without re-encoding — low CPU.
+- Service `egor-camera.service` (installer `utils/setup_camera_service.sh`) runs
+  `ustreamer -d /dev/video0 -r 640x480 -m MJPEG -f 15 -s 0.0.0.0 -p 8081`. Stream
+  at `http://<host>:8081/stream`, viewer page at `http://<host>:8081/`.
+- `robot_ui.html` embeds the stream as an `<img>` whose URL is built from the
+  page's own host (`location.hostname` + `:8081/stream`), with an auto-retrying
+  "camera offline" overlay. A cross-origin `<img>` needs no CORS.
+- Harmless startup warning: *"Device doesn't support setting of HW encoding quality
+  parameters"* — the G910 exposes no JPEG-quality control; MJPG passthrough is
+  unaffected.
+- Tunables: resolution/fps at the top of `setup_camera_service.sh`; video-panel
+  `max-width` (`.cam`) and button sizes in `robot_ui.html`.
+
+---
+
+## Access layer — egorwifi AP + QR
+
+So the robot needs no router and no IP lookup, the Pi hosts its own Wi-Fi.
+
+- **AP** (`utils/setup_ap.sh`): wlan0 → SSID `egorwifi`, WPA2 pw `password`, 2.4 GHz,
+  Pi fixed at **`10.10.10.1`** (control page `http://10.10.10.1:8080`). Runs as an NM
+  connection `egor-ap` (autoconnect priority 100); home Wi-Fi kept as a lower-priority
+  autoconnect fallback so a failed AP start isn't a lock-out. Activating it takes wlan0
+  off home Wi-Fi.
+- **Clean URL / captive** (`utils/setup_captive.sh`): a dnsmasq wildcard
+  (`address=/#/10.10.10.1` in `/etc/NetworkManager/dnsmasq-shared.d/`) + a tiny root
+  service `egor-captive80.service` (`/usr/local/sbin/egor-captive80.py`) listening on
+  port 80 that 302-redirects to the control page. Makes `http://10.10.10.1` (no port)
+  work; verify with `curl -I http://10.10.10.1`.
+- **QR sticker** (`utils/make_qr.py`, needs `qrcode[pil]`): two QRs — join egorwifi
+  (password embedded) + open the controls — on a printable card (`egor_qr_card.png`).
+
+  ![The two-QR access sticker](utils/images/qr_card.png)
+  *(Save a snapshot of the printed card as `utils/images/qr_card.png`.)*
+- **Maintenance while on the AP:** cable eth0 to a router and read its `192.168.0.x`
+  IP from `/admin`, then `ssh u@<that ip>`; or `ssh u@10.10.10.1` over egorwifi; or
+  `setup_eth_direct.sh` (`10.0.0.1`) for a direct laptop cable.
+
+**Captive auto-open — attempted, NOT working, do not re-chase.** The port-80 side is
+correct (`curl` returns 302), but modern iPhones/Androids bypass the network DNS
+(Private DNS / DoH) and/or use HTTPS connectivity checks that can't be intercepted, so
+the page does not auto-pop on most phones. This is a phone-side limitation, not a Pi
+config issue. **The two-QR sticker is the access method** and works on every phone.
+
+---
+
+## Scripts (in `utils/`)
+
+- **`scan_motors.py`** — non-invasive: reads a parameter from every CAN ID
+  0–127 and reports which motors answer. Never enables/moves a motor. Use it to
+  discover IDs. (Currently finds `0x7E` and `0x7F`.)
+- **`motor_test.py`** — minimal: enable motor `0x7F` → read one feedback frame →
+  disable. Good "is it alive?" check. Targets `can0`.
+- **`spin_test.py`** — speed mode: gently spins one motor at a set rad/s for a
+  few seconds, prints live telemetry, self-disables. Tunables at top.
+- **`dance_test.py`** — the full demo on `can0`: driver fwd/back 3 turns,
+  passenger fwd/back 3 turns, both fwd/back 3 turns, then stop. Counts wheel
+  turns from feedback, eases to a slow speed for the last turn, direction-
+  corrected, `try/finally` disables everything on exit.
+- **`shutdown_button.py`** — GPIO26 momentary button → clean `shutdown -h now`
+  (runs as a systemd service; guards the SD card against power-bump corruption).
+- **`setup_can_service.sh`** — one-time installer (`sudo ./utils/setup_can_service.sh`):
+  creates a helper + `egor-can.service` so `can0` comes up at 1 Mbit/s on every
+  boot. Idempotent; safe to re-run.
+- **`check_can.sh`** — read-only post-boot check that `can0` is up, ERROR-ACTIVE,
+  and at 1 Mbit/s.
+- **`bootcrumbs.sh`** — install/show/remove boot breadcrumbs: stamp how far a boot
+  got (+ IP + board model) onto the card at each stage, to diagnose a Pi that won't
+  boot or isn't reachable without HDMI/serial. Reusable on any Pi.
+- **`setup_eth_direct.sh`** — set the wired port (eth0) to hand out addresses on
+  10.0.0.0/24, so a laptop plugged straight in (no router) can `ssh u@10.0.0.1`.
+  Do NOT plug that into a home router (it runs its own DHCP).
+- **`robot_server.py`** — Flask HTTP control server (see Web control layer). Serves
+  the UI + REST API on port 8080. Needs `python3-flask`.
+- **`robot_ui.html`** — the joystick web page, served at `/`; also embeds the
+  webcam video panel (µStreamer stream on :8081) and a **rear/front-wheel drive
+  toggle** whose camera border shows the mode (green = rear, red = front).
+- **`admin.html`** — the admin / health page, served at `/admin` (interface IPs +
+  SSH target, power/temp, service + CAN health, reboot).
+- **`run_status.py`, `run_fwd_test.py`, `run_left_test.py`, `run_right_test.py`,
+  `run_stop_test.py`** — low-level API test clients (stdlib `urllib` only; set
+  `EGOR_API` to target a remote host).
+- **`estop.sh`** — emergency stop: kills any control process and sends the CAN
+  disable to both motors.
+- **`setup_robot_service.sh`** / **`stop_robot_service.sh`** — install the boot
+  service for `robot_server.py` / stop it for development.
+- **`setup_camera_service.sh`** — one-time installer for `egor-camera.service`
+  (µStreamer MJPEG webcam stream on port 8081). Needs `ustreamer` + `v4l-utils`.
+- **`setup_shutdown_api.sh`** — one-time installer: grants the server
+  password-less sudo for only `shutdown`, enabling the web ⏻ shutdown button.
+- **`setup_ap.sh`** — turn wlan0 into the `egorwifi` access point (`10.10.10.1`),
+  home Wi-Fi kept as an autoconnect fallback. Reboot to activate.
+- **`setup_captive.sh`** — wildcard DNS + a port-80 redirect service so
+  `http://10.10.10.1` (no port) works (captive auto-open attempted; blocked by
+  phones — see Access layer).
+- **`make_qr.py`** — generate the two-QR access sticker (needs `qrcode[pil]`).
+
+All motor scripts assume `can0` is already up (see Gotcha #2). Always test with
+the **wheels off the ground** — a commanded spin will drive the chassis.
+
+---
+
+## CyberGear CAN protocol quick reference
+
+Extended 29-bit ID = `(cmd_type << 24) | (master_id << 8) | motor_id`
+(master_id = `0x00` here).
+
+Command types: **enable `0x03`**, **stop/reset `0x04`**, **write-param `0x12`**,
+**read-param `0x11`**, **feedback (from motor) `0x02`**, set-mechanical-zero `0x06`.
+
+Write-parameter frame (`0x12`) data layout:
+`bytes 0–1 = index (little-endian), 2–3 = 0, 4–7 = value` (float32 LE, or uint8
+in byte 4 for enum params).
+
+Key parameters:
+- `run_mode` `0x7005` — 0=operation(MIT), 1=position, 2=**speed**, 3=current
+- `spd_ref` `0x700A` — float, rad/s, ±30 (speed mode target)
+- `loc_ref` `0x7016` — float, rad (position mode target)
+- `limit_spd` `0x7017` — float, rad/s (position-mode speed limit)
+- `limit_cur` `0x7018` — float, A, 0–23 (current/torque budget)
+
+Feedback frame (`0x02`) — the sender's motor ID is in **ID bits 15–8**
+(e.g. `0x02807F00` → motor `0x7F`). Data is 4 big-endian 16-bit fields:
+angle, velocity, torque, temperature. Mappings: angle `-4π…4π`,
+velocity `-30…30 rad/s`, torque `-12…12 Nm`, temperature = `raw × 0.1 °C`.
+Counting multi-turn: unwrap the ±4π angle rollover (jump > 4π ⇒ ∓8π).
+
+---
+
+## Diagnostic playbook
+
+- `ip -details -statistics link show can0`
+  - `state ERROR-ACTIVE` = healthy. `ERROR-PASSIVE` / `BUS-OFF` = trouble.
+  - **TX errors climbing while `bus-errors` = 0 ⇒ no ACK ⇒ nothing alive on the
+    bus** (unpowered motor, broken wiring, or bitrate mismatch). CAN ACK is
+    address-independent: any powered, correctly-wired, correct-bitrate node
+    acknowledges ANY well-formed frame, so "no ACK" is physical/bitrate, never a
+    payload/ID problem.
+- `candump can0` — watch live traffic. `candump -e can0` also shows error frames.
+- `cansend can0 0300007F#0000000000000000` — manually enable motor `0x7F`;
+  `...0400007F...` stops it.
+- **Beware false "responses":** a naive `bus.recv()` can return a SocketCAN
+  **error frame** (e.g. ID `0x00000004` = `CAN_ERR_CRTL`) which is NOT a motor
+  reply. A genuine reply is a **type-2** frame (ID starts `0x02`). Filter by
+  `(arb_id >> 24) & 0x1F == 2`.
+
+## Connector pinout (CyberGear XT30PB 2+2)
+
+Two **large** pins = power: Pin 1 `+24 V`, Pin 2 `GND`. Two **small** pins = CAN:
+Pin 3 `CAN_L`, Pin 4 `CAN_H` (no visual H/L marking — verify by continuity).
+Hat terminals are labeled H/L and must not be reversed. On this robot the CAN
+wires are blue/white; orientation was tested and did **not** matter for our
+fault — the real issues were interface naming (`can0`) and motor rail power.
+
+## Termination
+
+The hat's onboard 120 Ω terminator jumper is **ON** (`120R`/`ON`). CyberGear
+motors have no internal termination, so the bus is single-terminated — fine at
+this short length. Add a second 120 Ω at the far motor if longer runs act flaky.
+
+---
+
+## Planned / next
+
+- **DHCP reservation** on the home router for a stable at-home IP (interim measure).
+- Optional: captive-portal auto-open is blocked by phone DNS/HTTPS behavior — only
+  worth revisiting if a future OS makes local-DNS captive detection reliable again.
+- Optional: assign motors more memorable/unique IDs and label them physically.
+
+_Done: CAN auto-up at boot (`egor-can.service`); HTTP control server + web joystick
+(`egor-robot.service`), untethered drive test passed; live webcam video
+(`egor-camera.service`); web shutdown + reboot; rear/front-wheel drive toggle; admin/health page;
+boot-breadcrumb diagnostics; resilient server (runs without CAN); **egorwifi AP + two-QR access**
+(`egor-ap`, `10.10.10.1`). Captive-portal auto-open attempted, blocked by modern
+phone DNS/HTTPS — two-QR is the method. Sept 2026._

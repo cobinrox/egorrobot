@@ -32,7 +32,7 @@
   button.dir .lbl{font-size:.55rem; color:var(--muted); letter-spacing:.02em;}
   button.dir.active{background:var(--btn-active);} button.dir.active .lbl{color:#dbe6ff;}
   button.stop{background:#374151;}
-  button.estop{width:100%; margin-top:10px; padding:12px; font-size:1rem; font-weight:800;
+  button.estop{width:100%; margin-top:20px; padding:12px; font-size:1rem; font-weight:800;
     letter-spacing:.05em; background:var(--err); color:#fff; border-radius:12px;}
   button.shutdown{width:100%; margin-top:16px; padding:11px; font-size:.9rem; font-weight:600;
     background:transparent; color:var(--muted); border:1px solid #3a4150; border-radius:10px;}
@@ -40,19 +40,36 @@
   button.enable{width:100%; margin-top:10px; padding:12px; font-size:.95rem; font-weight:700;
     background:var(--ok); color:#06210f; border-radius:12px; display:none;}
   button.enable.show{display:block;}
+  button.sleep{width:100%; margin-top:10px; padding:11px; font-size:.92rem; font-weight:700;
+    background:var(--btn); color:var(--txt); border:1px solid #3a4150; border-radius:12px;}
+  button.sleep:active{background:#2a2f3a;}
+  button.sleep.asleep{background:rgba(139,147,163,.14); color:var(--muted); border-color:#4a5262;}
+  .grid.asleep{opacity:.45; transition:opacity .15s;}
   .hint{color:var(--muted); font-size:.72rem; text-align:center; margin-top:14px; line-height:1.5;}
   .cam{position:relative; width:100%; max-width:320px; aspect-ratio:4/3; background:#000;
-    border-radius:12px; overflow:hidden; margin:0 auto 12px; display:flex;
-    align-items:center; justify-content:center;}
+    border:4px solid var(--ok); border-radius:12px; overflow:hidden; margin:0 auto 12px;
+    display:flex; align-items:center; justify-content:center;}
   .cam img{width:100%; height:100%; object-fit:contain; display:block;}
   .camoff{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     color:var(--muted); font-size:.9rem; background:#000; text-align:center; padding:12px;}
   .camoff.hide{display:none;}
+  .cam.fwd{border-color:var(--err);}
+  .modes{display:flex; gap:8px; margin-bottom:12px;}
+  .modes .mode{flex:1; padding:9px 6px; border-radius:10px; border:1px solid #3a4150;
+    background:transparent; color:var(--muted); font-size:.82rem; font-weight:600;
+    cursor:pointer; font-family:inherit;}
+  #mrear.active{background:rgba(34,197,94,.18); color:var(--ok); border-color:var(--ok);}
+  #mfront.active{background:rgba(239,68,68,.18); color:var(--err); border-color:var(--err);}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1><span id="conn" class="dot"></span> Egor Control</h1>
+
+  <div class="modes">
+    <button class="mode" id="mrear">Rear-wheel drive</button>
+    <button class="mode" id="mfront">Front-wheel drive</button>
+  </div>
 
   <div class="cam">
     <img id="cam" alt="camera view">
@@ -83,12 +100,15 @@
     <button class="dir" data-cmd="REV_R"><span class="sym">&#8600;</span><span class="lbl">REV-R</span></button>
   </div>
 
+  <button class="sleep" id="sleepBtn">&#128564; Sleep Motors</button>
+
   <button class="estop" id="estopBtn">EMERGENCY STOP</button>
   <button class="enable" id="enableBtn">ENABLE (clear e-stop)</button>
 
   <div class="hint">
     Hold a button to move; release to stop.<br>
     Keys: arrows / WASD move &middot; Q/E &amp; Z/C curve &middot; Space stops.<br>
+    Sleep quiets the motors to save power; driving wakes them.<br>
     <a href="/admin" style="color:#5b9bff;">admin / network info</a>
   </div>
 
@@ -98,6 +118,38 @@
 <script>
 (function(){
   "use strict";
+
+  // --- drive mode (rear = normal; front = 180-degree flip: negate both wheels) ---
+  let driveMode = "rear";
+  function applyMode(m){
+    driveMode = (m === "front") ? "front" : "rear";
+    const r = document.getElementById("mrear"), f = document.getElementById("mfront"), c = document.querySelector(".cam");
+    if(r) r.classList.toggle("active", driveMode === "rear");
+    if(f) f.classList.toggle("active", driveMode === "front");
+    if(c) c.classList.toggle("fwd", driveMode === "front");   // green=RWD, red=FWD
+  }
+  async function setMode(m){ applyMode(m); try{ await fetch("/api/mode/" + m, {method:"POST"}); }catch(e){} }
+  document.getElementById("mrear").addEventListener("click", function(){ setMode("rear"); });
+  document.getElementById("mfront").addEventListener("click", function(){ setMode("front"); });
+  applyMode("rear");
+
+  // --- sleep / wake (benign motor disable; distinct from e-stop) ---
+  const sleepBtn = document.getElementById("sleepBtn");
+  const gridEl = document.querySelector(".grid");
+  let asleep = false;
+  function applySleep(a){
+    asleep = !!a;
+    sleepBtn.classList.toggle("asleep", asleep);
+    sleepBtn.innerHTML = asleep ? "\u25B6\uFE0E Wake Motors" : "\uD83D\uDE34 Sleep Motors";
+    if(gridEl) gridEl.classList.toggle("asleep", asleep);
+  }
+  sleepBtn.addEventListener("click", function(){
+    const target = !asleep;
+    applySleep(target);                    // optimistic; poll() re-syncs to the server
+    post(target ? "/api/sleep" : "/api/wake");
+  });
+  applySleep(false);
+
   const HOLD_MS = 150;            // resend interval while held (feeds the watchdog)
   let activeCmd = null;
   let timer = null;
@@ -191,6 +243,8 @@
       const r = await fetch("/api/status", {cache:"no-store"});
       const s = await r.json();
       conn.className = "dot ok";
+      if(s.drive_mode) applyMode(s.drive_mode);
+      if(typeof s.asleep === "boolean") applySleep(s.asleep);
       document.getElementById("lvel").textContent = n(s.wheels.left.vel_rad_s);
       document.getElementById("rvel").textContent = n(s.wheels.right.vel_rad_s);
       document.getElementById("ltmp").textContent = n(s.wheels.left.temp_c);
