@@ -14,8 +14,8 @@ networking/IP issue, not hardware. The portable **egorwifi access point**
 auto-open was attempted but is blocked by modern phone DNS/HTTPS behavior (use the
 QR). As of September 2026.
 
-![Egor — the robot chassis](utils/images/robot.png)
-*(Drop a photo of the robot in as `utils/images/robot.png`.)*
+![Egor — the robot chassis](images/robot.png)
+*(Drop a photo of the robot in as `images/robot.png`.)*
 
 ---
 
@@ -327,13 +327,13 @@ it is 5 **wheel** turns regardless of the 7.75:1 gearing.
 
 ## Web control layer
 
-![The web control page](utils/images/main_web_page.png)
+![The web control page](images/main_web_page.png)
 
-The robot is drivable over HTTP. `utils/robot_server.py` (Flask) runs a background
-control thread that owns the CAN bus and streams speed commands to both wheels at
-50 Hz; Flask request handlers only update shared target state (never touch the bus).
-`utils/robot_ui.html` (the joystick page) and `utils/admin.html` must sit alongside
-it in `utils/`.
+The robot is drivable over HTTP. `robot_server.py` (Flask, in the repo root) runs a
+background control thread that owns the CAN bus and streams speed commands to both
+wheels at 50 Hz; Flask request handlers only update shared target state (never touch
+the bus). `robot_ui.html` (the joystick page) and `admin.html` must sit alongside it
+(the server loads them relative to its own file), so all three live in the repo root.
 
 **Install & run** (recommended: as the auto-start service):
 ```
@@ -350,7 +350,7 @@ big EMERGENCY STOP. **Wheels off the ground until you're sure.**
 **Development loop:**
 ```
 ./utils/stop_robot_service.sh              # stop the service (also disables motors)
-python3 utils/robot_server.py              # run manually to iterate
+python3 robot_server.py                    # run manually to iterate (from repo root)
 sudo systemctl start egor-robot.service    # hand back to the service when done
 ```
 
@@ -380,7 +380,7 @@ How it works:
   quiet. `/api/wake` re-arms them, and any drive command auto-wakes (re-arms, then
   applies that command in the same pass). Reported as `asleep` in `/api/status`.
   Separate from e-stop: waking does **not** clear an e-stop.
-- **UI:** `utils/robot_ui.html` is served at `/` — same origin as the API (no
+- **UI:** `robot_ui.html` is served at `/` — same origin as the API (no
   CORS). Served by Flask, not a static host, because it must reach the Pi's local
   API. 3×3 pad + keyboard + live telemetry.
 
@@ -436,9 +436,9 @@ python3 utils/run_stop_test.py    # single stop
 
 ### Admin / maintenance page
 
-![The admin / health page](utils/images/admin_page.png)
+![The admin / health page](images/admin_page.png)
 
-`GET /admin` (served from `utils/admin.html`, linked at the bottom of the control
+`GET /admin` (served from `admin.html`, linked at the bottom of the control
 page) is a live health panel refreshed every 3 s. It answers "is the robot healthy,
 and how do I SSH in?" at a glance, backed by two read endpoints:
 
@@ -530,8 +530,8 @@ SSID/password/URL change.
 pip install "qrcode[pil]" && python3 utils/make_qr.py    # writes egor_qr_card.png
 ```
 
-  ![The two-QR access sticker](utils/images/qr_card.png)
-  *(Save a snapshot of the printed card as `utils/images/qr_card.png`.)*
+  ![The two-QR access sticker](images/qr_card.png)
+  *(Save a snapshot of the printed card as `images/qr_card.png`.)*
 
 **Captive auto-open — attempted, NOT working, do not re-chase.** The port-80 side is
 correct (`curl` returns 302), but modern iPhones/Androids bypass the network DNS
@@ -571,7 +571,26 @@ are reusable on other Raspberry Pi projects.
 
 ---
 
-## Scripts (in `utils/`)
+## Files & scripts
+
+The **main program lives in the repo root**; the helper scripts, tests, and
+service installers live in **`utils/`**.
+
+### Main program (repo root)
+
+- **`robot_server.py`** — Flask HTTP control server (see Web control layer). Serves
+  the UI + REST API on port 8080. Needs `python3-flask`. Finds `robot_ui.html` and
+  `admin.html` next to itself, so the three stay together (here, the root).
+- **`robot_ui.html`** — the joystick web page, served at `/`; embeds the webcam
+  video panel (µStreamer stream on :8081), a **rear/front-wheel drive toggle**
+  (camera border green = rear, red = front), and a **Sleep/Wake motor** toggle that
+  quiets the motors when idle.
+- **`admin.html`** — the admin / health page, served at `/admin` (interface IPs +
+  SSH target, power/temp, service + CAN health, reboot).
+- **`images/`** — doc screenshots referenced from this file: `main_web_page.png`,
+  `admin_page.png`, plus spots for `robot.png` and `qr_card.png`.
+
+### Helpers, tests & installers (`utils/`)
 
 - **`scan_motors.py`** — non-invasive: reads a parameter from every CAN ID
   0–127 and reports which motors answer. Never enables/moves a motor. Use it to
@@ -597,14 +616,6 @@ are reusable on other Raspberry Pi projects.
 - **`setup_eth_direct.sh`** — set the wired port (eth0) to hand out addresses on
   10.0.0.0/24, so a laptop plugged straight in (no router) can `ssh u@10.0.0.1`.
   Do NOT plug that into a home router (it runs its own DHCP).
-- **`robot_server.py`** — Flask HTTP control server (see Web control layer). Serves
-  the UI + REST API on port 8080. Needs `python3-flask`.
-- **`robot_ui.html`** — the joystick web page, served at `/`; also embeds the
-  webcam video panel (µStreamer stream on :8081) and a **rear/front-wheel drive
-  toggle** (camera border green = rear, red = front) and a **Sleep/Wake motor**
-  toggle that quiets the motors when idle.
-- **`admin.html`** — the admin / health page, served at `/admin` (interface IPs +
-  SSH target, power/temp, service + CAN health, reboot).
 - **`run_status.py`, `run_fwd_test.py`, `run_left_test.py`, `run_right_test.py`,
   `run_stop_test.py`** — low-level API test clients (stdlib `urllib` only; set
   `EGOR_API` to target a remote host).
@@ -622,8 +633,6 @@ are reusable on other Raspberry Pi projects.
   `http://10.10.10.1` (no port) works (captive auto-open attempted; blocked by
   phones — see Access layer).
 - **`make_qr.py`** — generate the two-QR access sticker (needs `qrcode[pil]`).
-- **`images/`** — doc screenshots referenced from this file: `main_web_page.png`,
-  `admin_page.png`, plus spots for `robot.png` and `qr_card.png`.
 
 All motor scripts assume `can0` is already up (see Gotcha #2). Always test with
 the **wheels off the ground** — a commanded spin will drive the chassis.

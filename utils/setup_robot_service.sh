@@ -22,13 +22,16 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 # Resolve absolute paths from THIS script's location (it lives in utils/).
+# The main program now lives in the repo ROOT (one level up from utils/),
+# alongside robot_ui.html and admin.html.
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-SERVER="${SCRIPT_DIR}/robot_server.py"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SERVER="${ROOT_DIR}/robot_server.py"
 RUN_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
 PY="$(command -v python3)"
 
 if [[ ! -f "${SERVER}" ]]; then
-    echo "ERROR: ${SERVER} not found (copy robot_server.py + robot_ui.html here first)" >&2
+    echo "ERROR: ${SERVER} not found (robot_server.py + robot_ui.html + admin.html live in the repo root)" >&2
     exit 1
 fi
 
@@ -44,7 +47,7 @@ Wants=egor-can.service
 [Service]
 Type=simple
 User=${RUN_USER}
-WorkingDirectory=${SCRIPT_DIR}
+WorkingDirectory=${ROOT_DIR}
 ExecStart=${PY} ${SERVER}
 Restart=on-failure
 RestartSec=2

@@ -23,6 +23,6 @@ echo
 systemctl --no-pager --full status "${SERVICE}" | head -n 5 || true
 echo
 echo "Stopped. It will start again on next boot."
-echo "  Run manually for dev:      python3 utils/robot_server.py"
+echo "  Run manually for dev:      python3 robot_server.py   (from the repo root)"
 echo "  Turn OFF auto-start:        sudo systemctl disable ${SERVICE}"
 echo "  Turn auto-start back ON:    sudo systemctl enable ${SERVICE}"
