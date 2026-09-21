@@ -279,13 +279,52 @@ A few utilities exist purely to make this (or any) Pi easier to look after:
   sudo ./utils/bootcrumbs.sh remove      # take them out when done
   ```
 - **`setup_eth_direct.sh`** — router-free wired SSH: makes eth0 hand out an address
-  so a laptop plugged straight in (via a USB-Ethernet dongle) can `ssh u@10.10.10.1`.
+  so a laptop plugged straight in (via a USB-Ethernet dongle) can `ssh u@10.0.0.1`.
   Don't plug that port into a home router (it runs its own DHCP).
   ```
   sudo ./utils/setup_eth_direct.sh
   ```
 
 These are reusable on other Raspberry Pi projects, not just this robot.
+
+## 10. Portable access — egorwifi AP + QR
+
+So the robot works **anywhere with no router** and no IP to remember, the Pi hosts
+its own Wi-Fi and you reach it at a fixed address.
+
+**Access point (`setup_ap.sh`)** — turns wlan0 into the AP:
+
+- SSID **`egorwifi`**, password **`password`** (WPA2), 2.4 GHz.
+- Pi fixed at **`10.10.10.1`** → control page **`http://10.10.10.1:8080`**.
+- Home Wi-Fi is kept as a lower-priority autoconnect **fallback** (if the AP fails
+  to start on boot, the Pi rejoins home Wi-Fi so you're not locked out).
+
+```
+sudo ./utils/setup_ap.sh      # then: sudo reboot
+```
+
+Activating the AP drops wlan0 off home Wi-Fi. Reconnect by joining egorwifi
+(`ssh u@10.10.10.1`), or over eth0-to-router (`ssh u@192.168.0.xx`, IP from `/admin`).
+
+**Clean URL (`setup_captive.sh`)** — adds wildcard DNS + a tiny root service on
+port 80 that redirects to the control page, so `http://10.10.10.1` (no `:8080`)
+works. Verify with `curl -I http://10.10.10.1` (expect `302`).
+
+**QR sticker (`make_qr.py`)** — makes a printable card with two QR codes: one
+**joins egorwifi** (password embedded, no typing), one **opens the controls**.
+Scan to join, scan to drive. Edit the constants + re-run if the SSID/password/URL
+change.
+
+```
+pip install "qrcode[pil]" && python3 utils/make_qr.py    # writes egor_qr_card.png
+```
+
+> **Captive-portal auto-open: attempted, not reliable — don't re-chase it.** The
+> port-80 redirect works (`curl` returns 302), but modern iPhones/Androids bypass
+> the network's DNS (Private DNS / DoH) and/or use HTTPS for their "is there
+> internet?" check, so the page won't auto-pop on most phones — a phone-side
+> limitation the robot can't influence. The **two-QR sticker is the intended access
+> method** and works on every phone (which is why commercial gadgets do the same).
 
 ---
 
@@ -309,7 +348,11 @@ These are reusable on other Raspberry Pi projects, not just this robot.
 | Enable web shutdown button    | `sudo ./utils/setup_shutdown_api.sh` (one time)     |
 | Open the admin / health page  | `http://egor:8080/admin`                            |
 | Diagnose a Pi that won't boot | `sudo ./utils/bootcrumbs.sh install` (read elsewhere) |
-| Direct-cable SSH (no router)  | `sudo ./utils/setup_eth_direct.sh` -> `ssh u@10.10.10.1` |
+| Direct-cable SSH (no router)  | `sudo ./utils/setup_eth_direct.sh` -> `ssh u@10.0.0.1` |
+| Set up egorwifi AP (portable) | `sudo ./utils/setup_ap.sh` (then reboot)            |
+| Clean URL / captive attempt   | `sudo ./utils/setup_captive.sh`                     |
+| Make the access QR sticker    | `python3 utils/make_qr.py`                          |
+| Control page on the AP        | `http://10.10.10.1:8080`  (or `http://10.10.10.1`)  |
 
 Motor IDs: **driver `0x7F`**, **passenger `0x7E`** (daisy-chained on `can0`).
 See `CLAUDE.md` for the full protocol reference and troubleshooting playbook.

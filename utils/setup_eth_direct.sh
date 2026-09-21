@@ -6,11 +6,11 @@
 # laptop plugged straight into it (via a USB-Ethernet dongle, no router) gets an
 # address automatically and can SSH to the Pi - anywhere, no network required.
 #
-#   Pi (eth0):  10.10.10.1
-#   laptop:     10.10.10.x   (handed out by the Pi automatically)
-#   SSH:        ssh u@10.10.10.1
+#   Pi (eth0):  10.0.0.1
+#   laptop:     10.0.0.x   (handed out by the Pi automatically)
+#   SSH:        ssh u@10.0.0.1
 #
-# The 10.10.10.0/24 range is deliberately unlike a home Wi-Fi's 192.168.x, so
+# The 10.0.0.0/24 range is deliberately unlike a home Wi-Fi's 192.168.x, so
 # it's obvious at a glance you're on the direct link, not the wireless network.
 #
 # Run:  sudo ./utils/setup_eth_direct.sh
@@ -23,7 +23,7 @@ set -euo pipefail
 
 CON="egor-eth-direct"
 IFACE="eth0"
-PI_IP="10.10.10.1/24"
+PI_IP="10.0.0.1/24"
 
 if [[ "${EUID}" -ne 0 ]]; then
     echo "ERROR: run as root:  sudo $0" >&2
@@ -49,12 +49,12 @@ nmcli connection up "${CON}"
 
 echo
 echo "----------------------------------------------------------------------"
-echo "eth0 address (expect: inet 10.10.10.1/24):"
+echo "eth0 address (expect: inet 10.0.0.1/24):"
 ip addr show "${IFACE}"
 echo
 echo "Device status (eth0 should be 'connected' via ${CON}):"
 nmcli device status
 echo "----------------------------------------------------------------------"
-echo "Done. Plug a laptop into ${IFACE}; it will get a 10.10.10.x address."
-echo "SSH to the Pi with:  ssh u@10.10.10.1"
+echo "Done. Plug a laptop into ${IFACE}; it will get a 10.0.0.x address."
+echo "SSH to the Pi with:  ssh u@10.0.0.1"
 echo "(Keep this port OFF your home router - it serves its own DHCP.)"

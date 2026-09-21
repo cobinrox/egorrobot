@@ -36,7 +36,7 @@ import json
 import socket
 
 import can
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, redirect
 
 # ---- Configuration ---------------------------------------------------------
 CHANNEL          = 'can0'
@@ -457,6 +457,13 @@ def reboot_pi():
             print(f"reboot failed: {e}", file=sys.stderr)
     threading.Thread(target=go, daemon=True).start()
     return jsonify(ok=True, command="REBOOT", note="Pi is rebooting")
+
+@app.errorhandler(404)
+def _captive_redirect(_e):
+    # Captive-portal + convenience: any unknown path (incl. OS connectivity
+    # checks like /generate_204, /hotspot-detect.html) bounces to the control
+    # page, so joining egorwifi auto-surfaces the controls.
+    return redirect("/", code=302)
 
 def main():
     global ctrl

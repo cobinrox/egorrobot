@@ -7,8 +7,9 @@ chatbot) needs to work on this robot without re-deriving the hard-won findings.
 corrected, untethered; the robot is drivable from a web joystick page with live
 webcam video and an admin/health page. The Pi5 is healthy — a Sept-2026 "won't
 boot" scare was diagnosed (via boot breadcrumbs) to a networking/IP issue, not
-hardware. The portable **egorwifi access point + QR + captive portal** is the next
-piece and is **not built yet**. As of September 2026.
+hardware. The portable **egorwifi access point** (`10.10.10.1`) + **two-QR sticker**
+access is built and working; captive-portal auto-open was attempted but is blocked by
+modern phone DNS/HTTPS behavior (use the QR). As of September 2026.
 
 ---
 
@@ -24,11 +25,11 @@ serve.
   the driver sees where it's going.
 - **One-tap safe shutdown** [done] — a confirm-guarded button that powers the Pi
   down cleanly from the page.
-- **Scan-and-go access** [planned, next] — the Pi will host its own Wi-Fi network
-  ("egorwifi") so the robot works anywhere with no router; a **QR sticker** joins
-  that network automatically (password baked in, nothing to type) and a **captive
-  portal** auto-opens the control page. Goal: walk up, scan, drive — no IP and no
-  network knowledge, wherever the robot is.
+- **Scan-and-go access** [done] — the Pi hosts its own Wi-Fi (`egorwifi`,
+  `10.10.10.1`) so the robot works anywhere with no router; a printable **two-QR
+  sticker** joins the network (password embedded, nothing to type) and opens the
+  controls. Scan to join, scan to drive. (Captive-portal *auto*-open was attempted
+  but modern phones block it — see Access layer; the two-QR flow is the method.)
 
 ### For admins / developers / troubleshooting
 The "make it maintainable" extras — several are generic enough to reuse on any
@@ -211,6 +212,34 @@ kept **separate** from the control server so video load never stalls motor contr
 
 ---
 
+## Access layer — egorwifi AP + QR
+
+So the robot needs no router and no IP lookup, the Pi hosts its own Wi-Fi.
+
+- **AP** (`utils/setup_ap.sh`): wlan0 → SSID `egorwifi`, WPA2 pw `password`, 2.4 GHz,
+  Pi fixed at **`10.10.10.1`** (control page `http://10.10.10.1:8080`). Runs as an NM
+  connection `egor-ap` (autoconnect priority 100); home Wi-Fi kept as a lower-priority
+  autoconnect fallback so a failed AP start isn't a lock-out. Activating it takes wlan0
+  off home Wi-Fi.
+- **Clean URL / captive** (`utils/setup_captive.sh`): a dnsmasq wildcard
+  (`address=/#/10.10.10.1` in `/etc/NetworkManager/dnsmasq-shared.d/`) + a tiny root
+  service `egor-captive80.service` (`/usr/local/sbin/egor-captive80.py`) listening on
+  port 80 that 302-redirects to the control page. Makes `http://10.10.10.1` (no port)
+  work; verify with `curl -I http://10.10.10.1`.
+- **QR sticker** (`utils/make_qr.py`, needs `qrcode[pil]`): two QRs — join egorwifi
+  (password embedded) + open the controls — on a printable card (`egor_qr_card.png`).
+- **Maintenance while on the AP:** cable eth0 to a router and read its `192.168.0.x`
+  IP from `/admin`, then `ssh u@<that ip>`; or `ssh u@10.10.10.1` over egorwifi; or
+  `setup_eth_direct.sh` (`10.0.0.1`) for a direct laptop cable.
+
+**Captive auto-open — attempted, NOT working, do not re-chase.** The port-80 side is
+correct (`curl` returns 302), but modern iPhones/Androids bypass the network DNS
+(Private DNS / DoH) and/or use HTTPS connectivity checks that can't be intercepted, so
+the page does not auto-pop on most phones. This is a phone-side limitation, not a Pi
+config issue. **The two-QR sticker is the access method** and works on every phone.
+
+---
+
 ## Scripts (in `utils/`)
 
 - **`scan_motors.py`** — non-invasive: reads a parameter from every CAN ID
@@ -235,7 +264,7 @@ kept **separate** from the control server so video load never stalls motor contr
   got (+ IP + board model) onto the card at each stage, to diagnose a Pi that won't
   boot or isn't reachable without HDMI/serial. Reusable on any Pi.
 - **`setup_eth_direct.sh`** — set the wired port (eth0) to hand out addresses on
-  10.10.10.0/24, so a laptop plugged straight in (no router) can `ssh u@10.10.10.1`.
+  10.0.0.0/24, so a laptop plugged straight in (no router) can `ssh u@10.0.0.1`.
   Do NOT plug that into a home router (it runs its own DHCP).
 - **`robot_server.py`** — Flask HTTP control server (see Web control layer). Serves
   the UI + REST API on port 8080. Needs `python3-flask`.
@@ -254,6 +283,12 @@ kept **separate** from the control server so video load never stalls motor contr
   (µStreamer MJPEG webcam stream on port 8081). Needs `ustreamer` + `v4l-utils`.
 - **`setup_shutdown_api.sh`** — one-time installer: grants the server
   password-less sudo for only `shutdown`, enabling the web ⏻ shutdown button.
+- **`setup_ap.sh`** — turn wlan0 into the `egorwifi` access point (`10.10.10.1`),
+  home Wi-Fi kept as an autoconnect fallback. Reboot to activate.
+- **`setup_captive.sh`** — wildcard DNS + a port-80 redirect service so
+  `http://10.10.10.1` (no port) works (captive auto-open attempted; blocked by
+  phones — see Access layer).
+- **`make_qr.py`** — generate the two-QR access sticker (needs `qrcode[pil]`).
 
 All motor scripts assume `can0` is already up (see Gotcha #2). Always test with
 the **wheels off the ground** — a commanded spin will drive the chassis.
@@ -322,15 +357,14 @@ this short length. Add a second 120 Ω at the far motor if longer runs act flaky
 
 ## Planned / next
 
-- **egorwifi access point + QR + captive portal** (in progress) — Pi hosts its own
-  Wi-Fi so the robot is router-independent; a Wi-Fi-join QR (password embedded) +
-  captive portal auto-open the control page. Decisions settled: AP on 2.4 GHz, SSID
-  `egorwifi`, keep home Wi-Fi as an auto fallback, admin page reports eth0's IP for
-  wired maintenance. Precursor done: `setup_eth_direct.sh`.
 - **DHCP reservation** on the home router for a stable at-home IP (interim measure).
+- Optional: captive-portal auto-open is blocked by phone DNS/HTTPS behavior — only
+  worth revisiting if a future OS makes local-DNS captive detection reliable again.
 - Optional: assign motors more memorable/unique IDs and label them physically.
 
 _Done: CAN auto-up at boot (`egor-can.service`); HTTP control server + web joystick
 (`egor-robot.service`), untethered drive test passed; live webcam video
 (`egor-camera.service`); web shutdown + reboot; admin/health page; boot-breadcrumb
-diagnostics; resilient server (runs without CAN). Sept 2026._
+diagnostics; resilient server (runs without CAN); **egorwifi AP + two-QR access**
+(`egor-ap`, `10.10.10.1`). Captive-portal auto-open attempted, blocked by modern
+phone DNS/HTTPS — two-QR is the method. Sept 2026._
