@@ -20,10 +20,12 @@ networking/IP issue, not hardware. The portable egorwifi access point
 auto-open was attempted but is blocked by modern phone DNS/HTTPS behavior (use the
 QR). As of September 2026.
 
+**Video/Demo**  
+https://www.youtube.com/shorts/Zz-gmUw6PC0
+
 ## Features at a glance
 
-Beyond basic driving, this project grew a set of features. They feature list is split based by who they
-serve.
+Beyond basic driving, this has the following features, split out based on whether the feature is geared for a user or for an admin.
 
 ### For the person using the robot
 - **Web joystick control** [done] — a phone-friendly page (hold-to-move, release-
