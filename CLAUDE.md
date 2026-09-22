@@ -1,27 +1,28 @@
 # EgorRobot — Master Guide & Project Context
 
-**This is the single source of truth for the project.** It's both the how-to
-(flash → wire → drive) and the reference (feature overview, CyberGear protocol,
-wiring gotchas, diagnostics). A new human *or* AI session should be able to work on
-the robot from this file alone — `README.md` just points here.
+**NOTE:** This document (`CLAUDE.md` is the single source of truth for this project.  A human *or* AI session should be able to work on the project from this file alone — `README.md` just points here.
+
+---
+
+## Introduction
+Revive and control a small Raspberry Pi 5 robot chassis with two wheels driven
+by Xiaomi CyberGear smart motors over a CAN bus. The robot previously worked; this effort brought it back to life after re-wiring and gave it a web-page control over private wifi access point.
+
+![Egor — the robot chassis](images/robot.png)
+<img src="images/main_web_page.png" alt="blahblah" width="250" height="350">
 
 **Status:** Working. Motors drive under command (speed & position), direction-
 corrected, untethered; the robot is drivable from a web joystick page with live
 webcam video, a rear/front-wheel drive toggle, and an admin/health page. The Pi5 is
 healthy — a Sept-2026 "won't boot" scare was diagnosed (via boot breadcrumbs) to a
-networking/IP issue, not hardware. The portable **egorwifi access point**
-(`10.10.10.1`) + **two-QR sticker** access is built and working; captive-portal
+networking/IP issue, not hardware. The portable egorwifi access point
+(`10.10.10.1`) + two-QR sticker access is built and working; captive-portal
 auto-open was attempted but is blocked by modern phone DNS/HTTPS behavior (use the
 QR). As of September 2026.
 
-![Egor — the robot chassis](images/robot.png)
-*(Drop a photo of the robot in as `images/robot.png`.)*
-
----
-
 ## Features at a glance
 
-Beyond basic driving, this project grew a set of features. They split by who they
+Beyond basic driving, this project grew a set of features. They feature list is split based by who they
 serve.
 
 ### For the person using the robot
@@ -76,12 +77,17 @@ Raspberry Pi project.
 
 ---
 
-## Quickstart (you already know Pi + CAN motor projects)
+## Quickstart
 
-The fast path. Assumes Raspberry Pi OS 64-bit **Lite**, the Waveshare 2-CH CAN HAT,
-and the repo at `~/gitprojects/egorrobot`. **Wheels off the ground.** The one trap
-that will waste your afternoon: the hat header silk-screened **"CAN1" is Linux
+This section is a fast path if you already know or are familiar with Pi + CAN motor projects and have the hardware. Assumes Raspberry Pi OS 64-bit **Lite**, the Waveshare 2-CH CAN HAT, CAN-compatible motors, 
+and the repo at `~/gitprojects/egorrobot`. 
+
+**NOTE/Warning!** The one trap
+that will waste your afternoon: the Pi hat header silk-screened **"CAN1" is Linux
 `can0`** — the motors live on `can0`.
+1. Attach the Waveshare CAN HAT to the Pi.
+1. Jump the CAN HAT's 120 Ohm jumper to ON.
+1. Install Raspi OS using the Raspi Imager.
 
 1. **CAN HAT overlays** — append to `/boot/firmware/config.txt`, then reboot:
    ```
@@ -113,21 +119,18 @@ that will waste your afternoon: the hat header silk-screened **"CAN1" is Linux
    **`egorwifi`** / pw **`password`**, robot at `http://10.10.10.1:8080`. Printable
    access sticker: `pip install "qrcode[pil]" && python3 utils/make_qr.py`.
 
-That's the whole system. Everything below is the same in full detail, plus the
-CyberGear protocol, wiring, and the diagnostic playbook.
+Everything below is the same in full detail, plus the
+CyberGear protocol, wiring, and diagnostic info.
 
 ---
 
-## What this project is
 
-Revive and control a small Raspberry Pi 5 robot chassis with two wheels driven
-by Xiaomi CyberGear smart motors over a CAN bus. The robot previously worked;
-this effort brought it back to life after re-wiring.
 
 ## Hardware
 
 - **Raspberry Pi 5**, hostname `egor`. OS: Raspberry Pi OS 64-bit **Lite**.
-- **Waveshare 2-CH CAN HAT** (MCP2515 controller + CAN transceiver per channel).
+- **Waveshare 2-CH CAN HAT** (MCP2515 controller + CAN transceiver per channel).  Set the 120 Ohm resistor jumper to ON.  
+<img src="images/hat.png" alt="pi hat">  
 - **2 × Xiaomi CyberGear micromotors** (model MIQDD-PG-06-12-02A), **7.75:1**
   integrated planetary gearbox. Feedback is **load-end (post-gearbox)**, so one
   reported "rotation" = one wheel turn.
@@ -177,10 +180,12 @@ switch** — the open one drops the full ~20 V; a closed one reads ~0 V.
 
 ---
 
-## First-time setup (full bring-up)
+## First-time setup
 
 The detailed version of the Quickstart, for anyone not already fluent in this kind
-of build. Do these once on a fresh card.
+of build. Do these once on a fresh SD card.
+### 0. Attach the Waveshare CAN hat to the Pi
+And set the CAN hat's 120 Ohm jumper to the ON position.
 
 ### 1. Flash the OS
 
@@ -733,6 +738,7 @@ Motor IDs: **driver `0x7F`**, **passenger `0x7E`** (daisy-chained on `can0`).
 ## Planned / next
 
 - **DHCP reservation** on the home router for a stable at-home IP (interim measure).
+- Use https
 - Optional: captive-portal auto-open is blocked by phone DNS/HTTPS behavior — only
   worth revisiting if a future OS makes local-DNS captive detection reliable again.
 - Optional: assign motors more memorable/unique IDs and label them physically.
